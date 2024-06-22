@@ -1,0 +1,196 @@
+#define RELAY_PIN1 26 // ESP32 pin GPIO26 yang terhubung ke relay
+#define RELAY_PIN2 33 // ESP32 pin GPIO33 yang terhubung ke relay
+#define TURBIDITY_PIN 34 // ESP32 pin GPIO34 (ADC1) yang terhubung ke pin AOUT sensor kekeruhan
+#define THRESHOLD 100 // Sesuaikan ambang batas sesuai kebutuhan
+
+#include <WiFi.h>
+
+// Ganti dengan kredensial jaringan Anda
+const char* ssid = "Bidadari";
+const char* password = "yupiulet76";
+
+// Tetapkan nomor port server web ke 80
+WiFiServer server(80);
+
+// Variabel untuk menyimpan permintaan HTTP
+String header;
+
+String output26State = "off";
+String output33State = "off";
+const int output26 = RELAY_PIN1;
+const int output33 = RELAY_PIN2;
+
+// Waktu saat ini
+unsigned long currentTime = millis();
+// Waktu sebelumnya
+unsigned long previousTime = 0;
+// Tentukan waktu batas waktu dalam milidetik (misalnya: 2000ms = 2s)
+const long timeoutTime = 2000;
+
+int sensorValue;
+int value;
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(RELAY_PIN1, OUTPUT);
+    pinMode(RELAY_PIN2, OUTPUT);
+
+    // Pastikan relai mati pada awalnya
+    digitalWrite(RELAY_PIN1, HIGH);
+    digitalWrite(RELAY_PIN2, HIGH);
+
+    // Hubungkan ke jaringan Wi-Fi dengan SSID dan kata sandi
+    Serial.print("Connecting to ");
+    Serial.println(ssid);
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    }
+
+  // Cetak alamat IP lokal dan mulai server web
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  server.begin();
+}
+
+void loop() {
+  // Baca nilai sensor kekeruhan
+  sensorValue = analogRead(TURBIDITY_PIN); // baca nilai analog dari sensor kekeruhan
+  value = map(sensorValue, 0, 4095, 0, 3000);
+
+  Serial.print("Turbidity: ");
+  if (value >= 2240) {
+  Serial.print("Jernih");
+  } else if (value >= 1680) {
+  Serial.print("Sedikit Keruh");
+  } else if (value >= 1120) {
+  Serial.print("Keruh");
+  } else {
+  Serial.print("Sangat Keruh");
+  }
+  Serial.print(" (");
+  Serial.print(value);
+  Serial.println(")");
+
+  delay(1000);
+
+WiFiClient client = server.available(); // Dengarkan klien yang masuk
+
+if (client) { // Jika klien baru terhubung,
+    currentTime = millis();
+    previousTime = currentTime;
+    Serial.println("New Client."); // cetak pesan di port serial
+    String currentLine = ""; // buat String untuk menyimpan data yang masuk dari klien
+    while (client.connected() && currentTime - previousTime <= timeoutTime) { // loop selama klien terhubung
+    currentTime = millis();
+    if (client.available()) { // jika ada byte yang dapat dibaca dari klien,
+    char c = client.read(); // baca satu byte, kemudian
+    Serial.write(c); // cetak di monitor serial
+    header += c;
+    if (c == '\n') { // jika byte adalah karakter newline
+    // jika baris saat ini kosong, Anda mendapatkan dua karakter newline berturut-turut.
+    
+    // itu adalah akhir dari permintaan HTTP klien, jadi kirim tanggapan:
+
+    if (currentLine.length() == 0) {
+    // Header HTTP selalu dimulai dengan kode respons (misalnya HTTP/1.1 200 OK)
+    // dan tipe konten agar klien tahu apa yang akan datang, lalu baris kosong:
+client.println("HTTP/1.1 200 OK");
+client.println("Content-type/html");
+client.println("Connection: close");
+client.println(); 
+
+            // menghidupkan dan mematikan GPIO
+        if (header.indexOf("GET /26/on") >= 0) {
+          Serial.println("GPIO 26 on");
+          output26State = "on";
+          digitalWrite(output26, HIGH);
+        } else if (header.indexOf("GET /26/off") >= 0) {
+          Serial.println("GPIO 26 off");
+          output26State = "off";
+          digitalWrite(output26, LOW);
+        } else if (header.indexOf("GET /33/on") >= 0) {
+          Serial.println("GPIO 33 on");
+          output33State = "on";
+          digitalWrite(output33, HIGH);
+        } else if (header.indexOf("GET /33/off") >= 0) {
+          Serial.println("GPIO 33 off");
+          output33State = "off";
+          digitalWrite(output33, LOW);
+        }
+
+        // Tampilkan halaman web HTML
+        client.println("<!DOCTYPE html><html>");
+        client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+        client.println("<link rel=\"icon\" href=\"data:,\">");
+        client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
+        client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+        client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
+        client.println(".button2 {background-color: #555555;}</style></head>");
+
+        client.println("<body><h1>Monitoring Kekeruhan Air</h1>");
+
+        // Tombol untuk Relay 1 (GPIO 26)
+        client.println("<p>Pompa Kuras ");
+        if (output26State == "off") {
+          client.println("<p><a href=\"/26/on\"><button class=\"button\">ON</button></a></p>");
+        } else {
+          client.println("<p><a href=\"/26/off\"><button class=\"button button2\">OFF</button></a></p>");
+        }
+
+        // Tombol untuk Relay 2 (GPIO 33)
+        client.println("<p>Pompa Isi ");
+        if (output33State == "off") {
+          client.println("<p><a href=\"/33/on\"><button class=\"button\">ON</button></a></p>");
+        } else {
+          client.println("<p><a href=\"/33/off\"><button class=\"button button2\">OFF</button></a></p>");
+        }
+
+        // Tampilkan kondisi
+        if (value >= 2240) { 
+          client.println("<p>Condition: Jernih</p>");
+        } else if (value >= 1680) { 
+          client.println("<p>Condition: Sedikit Keruh</p>");
+        } else if (value >= 1120) { 
+          client.println("<p>Condition: Keruh</p>");
+        } else { 
+          client.println("<p>Condition: Sangat Keruh</p>");
+        }
+
+        // Tampilkan status pompa
+        client.println("<p>Status Pompa: ");
+        if (output26State == "off" && output33State == "off") {
+          client.println("Kedua Pompa Menyala</p>");
+        } else if (output26State == "off") {
+          client.println("Sedang Menguras</p>");
+        } else if (output33State == "off") {
+          client.println("Sedang Mengisi</p>");
+        }else {
+          client.println("Tidak Aktif</p>");
+        }
+
+        client.println("</body></html>");
+
+        // Respons HTTP diakhiri dengan baris kosong lainnya
+        client.println();
+        // Keluar dari loop while
+        break;
+      } else { // jika Anda mendapatkan newline, maka kosongkan currentLine
+        currentLine = "";
+      }
+    } else if (c != '\r') {  // jika Anda mendapatkan apapun selain karakter carriage return,
+      currentLine += c;      // tambahkan ke akhir currentLine
+    }
+  }
+}
+// Bersihkan variabel header
+header = "";
+// Tutup koneksi
+client.stop();
+Serial.println("Client disconnected.");
+Serial.println("");
+  }
+}
